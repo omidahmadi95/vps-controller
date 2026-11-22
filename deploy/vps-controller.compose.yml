@@ -1,0 +1,64 @@
+# VPS Controller V2 on the server: the controller plus its PostgreSQL.
+# Copy deploy/.env.example to deploy/.env, fill it in, then on the VPS:
+#   docker compose -f deploy/vps-controller.compose.yml up -d
+#
+# The image is built on the laptop and copied over; the VPS is never a build machine:
+#   docker build --platform linux/amd64 -f backend/Dockerfile -t vps-controller:latest .
+services:
+  app:
+    image: ${APP_IMAGE:-vps-controller:latest}
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_URL: jdbc:postgresql://db:5432/vpscontroller
+      DB_USER: vpscontroller
+      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD muss gesetzt sein}
+      # Bind all interfaces inside the container; the published port stays loopback-only on the host.
+      SERVER_ADDRESS: 0.0.0.0
+      # Read-only Docker state (V1) through the socket proxy, over the shared proxy network.
+      VPS_DOCKER_URL: http://docker-socket-proxy:2375
+      VPS_CHECKS_FILE: /checks.yml
+      HEARTBEAT_URL: ${HEARTBEAT_URL:-}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+    volumes:
+      - ./checks.yml:/checks.yml:ro
+    ports:
+      - "127.0.0.1:18090:8080"
+    mem_limit: 384m
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - backend
+      - proxy
+
+  db:
+    image: postgres:17.11-alpine   # pin a digest here when deploying to the VPS
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: vpscontroller
+      POSTGRES_USER: vpscontroller
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD muss gesetzt sein}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    mem_limit: 128m
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vpscontroller -d vpscontroller"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - backend
+
+networks:
+  backend: {}
+  proxy:
+    external: true
+    name: ${PROXY_NETWORK:-docker-socket-proxy_default}
+
+volumes:
+  db-data: {}

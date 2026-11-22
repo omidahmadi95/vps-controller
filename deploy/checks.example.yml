@@ -1,0 +1,18 @@
+# Example checks file. Copy to deploy/checks.yml and mount it read-only into the app container.
+# On startup every entry is upserted by name; a check removed from this file stays in the history and
+# is shown as "Pausiert" instead of being deleted.
+checks:
+  - name: Website
+    url: https://www.example.org/
+    interval: 60s
+    timeout: 10s
+    accept: ["200-399"]        # status codes that count as reachable (range "200-399" or a single code "401")
+    failureThreshold: 2        # consecutive failures before the check goes DOWN
+    recoveryThreshold: 1       # consecutive successes before a DOWN check goes UP again
+  - name: API health
+    url: https://api.example.com/health
+    interval: 30s
+    timeout: 5s
+    accept: ["200-299", "401"]
+    failureThreshold: 3
+    recoveryThreshold: 2

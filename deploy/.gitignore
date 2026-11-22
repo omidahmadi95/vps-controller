@@ -1,0 +1,3 @@
+# Real deployment files stay on the server, out of the repo.
+.env
+checks.yml

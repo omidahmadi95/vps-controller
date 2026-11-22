@@ -1,65 +1,79 @@
-import { useEffect, useState } from 'react'
-import { loadContainers } from './load'
-import type { ContainerState, Load } from './types'
+import { useCallback, useEffect, useState } from 'react'
+import { ChecksView } from './ChecksView'
+import { ContainersView } from './ContainersView'
+import { clock, countBy, loadChecks, loadContainers, loadHistory, CHECK_ORDER, CONTAINER_ORDER } from './load'
+import { Readout } from './state'
+import type { ChecksReport, ContainerReport, HistoryBucket, Load } from './types'
 
-const tone: Record<ContainerState, string> = {
-  RUNNING: 'ok',
-  DEGRADED: 'bad',
-  STOPPED: 'muted',
-  UNREACHABLE: 'bad',
-  UNKNOWN: 'warn',
-}
-
-const time = (iso: string) => new Date(iso).toLocaleTimeString('de-CH')
-
-export function ContainerTable({ load }: { load: Load }) {
-  if (load.kind === 'loading') return <p>Lade …</p>
-  if (load.kind === 'unreachable')
-    return (
-      <p role="alert" className="badge bad">
-        Nicht erreichbar: {load.detail} (geprüft {time(load.checkedAt)})
-      </p>
-    )
-  const { containers, checkedAt } = load.report
-  // "2 Gestört · 11 Gestoppt · 48 Läuft": intentionally stopped containers are not counted as problems.
-  const counts = new Map<string, number>()
-  for (const c of containers) counts.set(c.label, (counts.get(c.label) ?? 0) + 1)
-  const summary = [...counts].map(([label, n]) => `${n} ${label}`).join(' · ')
-  return (
-    <>
-      <p>
-        {containers.length} Container: {summary} · geprüft {time(checkedAt)}
-      </p>
-      <table>
-        <thead>
-          <tr><th>Container</th><th>Status</th><th>Detail</th><th>Image</th></tr>
-        </thead>
-        <tbody>
-          {containers.map((c) => (
-            <tr key={c.name}>
-              <td>{c.name}</td>
-              <td><span className={`badge ${tone[c.state]}`}>{c.label}</span></td>
-              <td>{c.detail}</td>
-              <td><code>{c.image}</code></td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </>
-  )
-}
+type Tab = 'dienste' | 'container'
 
 export default function App() {
-  const [load, setLoad] = useState<Load>({ kind: 'loading' })
-  const refresh = () => loadContainers().then(setLoad)
-  useEffect(() => { refresh() }, [])
+  const [tab, setTab] = useState<Tab>('dienste')
+  const [checks, setChecks] = useState<Load<ChecksReport>>({ kind: 'loading' })
+  const [containers, setContainers] = useState<Load<ContainerReport>>({ kind: 'loading' })
+  const [history, setHistory] = useState<Record<number, HistoryBucket[]>>({})
+  const [busy, setBusy] = useState(true)
+  const [live, setLive] = useState('')
+
+  const refreshChecks = useCallback(async () => {
+    setBusy(true)
+    const next = await loadChecks()
+    setChecks(next)
+    if (next.kind === 'ok') {
+      const pairs = await Promise.all(next.report.checks.map(async (c) => [c.id, await loadHistory(c.id)] as const))
+      setHistory(Object.fromEntries(pairs.filter((p) => p[1] !== null)) as Record<number, HistoryBucket[]>)
+      setLive(`Aktualisiert ${clock(next.report.checkedAt)}`)
+    }
+    setBusy(false)
+  }, [])
+
+  const refreshContainers = useCallback(async () => {
+    setBusy(true)
+    const next = await loadContainers()
+    setContainers(next)
+    if (next.kind === 'ok') setLive(`Aktualisiert ${clock(next.report.checkedAt)}`)
+    setBusy(false)
+  }, [])
+
+  const refresh = tab === 'dienste' ? refreshChecks : refreshContainers
+  useEffect(() => {
+    void refresh()
+  }, [refresh])
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (tab === 'dienste') void refreshChecks()
+    }, 30_000)
+    return () => clearInterval(id)
+  }, [tab, refreshChecks])
+
+  const counts = tab === 'dienste'
+    ? (checks.kind === 'ok' ? countBy(checks.report.checks, CHECK_ORDER) : null)
+    : (containers.kind === 'ok' ? countBy(containers.report.containers, CONTAINER_ORDER) : null)
+  const checkedAt = tab === 'dienste'
+    ? (checks.kind === 'ok' ? checks.report.checkedAt : null)
+    : (containers.kind === 'ok' ? containers.report.checkedAt : null)
+
   return (
-    <main>
-      <header>
-        <h1>VPS Controller</h1>
-        <button type="button" onClick={refresh}>Neu laden</button>
+    <>
+      <header className="top">
+        <div className="wrap">
+          <div className="bar">
+            <h1 className="brand">VPS Controller</h1>
+            <nav className="tabs" aria-label="Ansicht">
+              <button type="button" aria-pressed={tab === 'dienste'} onClick={() => setTab('dienste')}>Dienste</button>
+              <button type="button" aria-pressed={tab === 'container'} onClick={() => setTab('container')}>Container</button>
+            </nav>
+            <button type="button" className="reload" onClick={() => void refresh()} disabled={busy} aria-busy={busy}>
+              {busy ? 'Lädt …' : 'Neu laden'}
+            </button>
+          </div>
+          <Readout counts={counts} checkedAt={checkedAt} />
+        </div>
       </header>
-      <ContainerTable load={load} />
-    </main>
+      <main className="wrap" aria-busy={busy}>
+        {tab === 'dienste' ? <ChecksView load={checks} history={history} /> : <ContainersView load={containers} />}
+      </main>
+      <p className="sr-only" role="status" aria-live="polite">{live}</p>
+    </>
   )
 }
