@@ -25,7 +25,7 @@ React (Vite, TS) ──/api──▶ Spring Boot 4 (Java 25) ──HTTP GET─�
 - `ContainerStatusMapper` – the state rules above (parses health and exit code out of Docker's `Status` text).
 - `DockerClient` – `GET /containers/json?all=true`; connection errors, timeouts (3 s), HTTP errors and
   unreadable JSON all become `SourceUnreachableException`.
-- `ContainerService` – maps and sorts: problems first, then by name.
+- `ContainerService` – maps and sorts by urgency (Gestört → Nicht erreichbar → Unbekannt → Gestoppt → Läuft), then by name.
 - `ContainerController` – `GET /api/containers`; `ApiErrors` turns an unreachable source into an RFC 9457
   problem (`503`, `title: "Nicht erreichbar"`).
 

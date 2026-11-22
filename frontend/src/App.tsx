@@ -21,11 +21,14 @@ export function ContainerTable({ load }: { load: Load }) {
       </p>
     )
   const { containers, checkedAt } = load.report
-  const problems = containers.filter((c) => c.state !== 'RUNNING').length
+  // "2 Gestört · 11 Gestoppt · 48 Läuft": intentionally stopped containers are not counted as problems.
+  const counts = new Map<string, number>()
+  for (const c of containers) counts.set(c.label, (counts.get(c.label) ?? 0) + 1)
+  const summary = [...counts].map(([label, n]) => `${n} ${label}`).join(' · ')
   return (
     <>
       <p>
-        {containers.length} Container, {problems} nicht «Läuft» · geprüft {time(checkedAt)}
+        {containers.length} Container: {summary} · geprüft {time(checkedAt)}
       </p>
       <table>
         <thead>

@@ -37,6 +37,6 @@ describe('ContainerTable', () => {
         { name: 'web', image: 'nginx', state: 'RUNNING', label: 'Läuft', detail: 'Kein Health-Check definiert' },
       ] } } }))
     expect(html).toContain('Gestört')
-    expect(html).toContain('2 Container, 1 nicht «Läuft»')
+    expect(html).toContain('2 Container: 1 Gestört · 1 Läuft')
   })
 })

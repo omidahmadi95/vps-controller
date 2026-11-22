@@ -15,11 +15,16 @@ public class ContainerService {
         this.mapper = mapper;
     }
 
-    /** Problems first, then by name, so the list answers "what is wrong?" at a glance. */
+    /** Most urgent first: broken, then uncertain, then intentionally stopped, then running. */
+    private static final List<ContainerState> URGENCY = List.of(
+            ContainerState.DEGRADED, ContainerState.UNREACHABLE, ContainerState.UNKNOWN,
+            ContainerState.STOPPED, ContainerState.RUNNING);
+
+    /** Sorted by urgency, then by name, so the list answers "what is wrong?" at a glance. */
     public List<ContainerView> containers() {
         return docker.listContainers().stream()
                 .map(mapper::map)
-                .sorted(Comparator.comparing((ContainerView v) -> v.state() == ContainerState.RUNNING)
+                .sorted(Comparator.comparingInt((ContainerView v) -> URGENCY.indexOf(v.state()))
                         .thenComparing(ContainerView::name))
                 .toList();
     }
