@@ -47,7 +47,7 @@ Source unreachable → `503 application/problem+json`:
 - The controller never touches the Docker socket. It talks to
   [docker-socket-proxy](https://github.com/Tecnativa/docker-socket-proxy) with only `CONTAINERS=1`; every
   `POST`/`DELETE` and every other API section is refused by the proxy.
-- The proxy listens on the server's loopback only; the laptop reaches it through an SSH tunnel.
+- The proxy listens on the server's loopback only (`deploy/docker-socket-proxy.compose.yml`); the laptop reaches it through an SSH tunnel.
 - The backend binds to `127.0.0.1`, runs as a normal user and stores nothing. No credentials live in this repo.
 - V1 has no login because nothing is reachable from outside; authentication comes with the first deployment.
 
