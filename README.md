@@ -61,7 +61,7 @@ cd frontend && npm ci && npm run dev              # http://localhost:5173
 
 ## Tests
 
-- `backend`: `./mvnw verify` – state table (18 cases), client error paths with `MockRestServiceServer`
+- `backend`: `./mvnw verify` – state table (20 cases), client error paths with `MockRestServiceServer`
   (5xx, connection refused, broken JSON), `@WebMvcTest` for the 200 and the 503 contract, sorting.
 - `frontend`: `npm test` (Vitest) – the page never shows an empty "all fine" list when the API fails.
 - CI: GitHub Actions runs both on every push.

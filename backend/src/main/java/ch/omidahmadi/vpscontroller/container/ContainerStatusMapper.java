@@ -52,9 +52,14 @@ public class ContainerStatusMapper {
             return ContainerView.of(name, image, ContainerState.UNKNOWN, "Beendet, Exit-Code unbekannt");
         }
         int code = Integer.parseInt(m.group(1));
-        return code == 0
-                ? ContainerView.of(name, image, ContainerState.STOPPED, "Sauber beendet (Exit 0)")
-                : ContainerView.of(name, image, ContainerState.DEGRADED, "Abgestürzt (Exit " + code + ")");
+        return switch (code) {
+            case 0 -> ContainerView.of(name, image, ContainerState.STOPPED, "Sauber beendet (Exit 0)");
+            // 143 = SIGTERM: what a normal `docker stop` sends; not a failure.
+            case 143 -> ContainerView.of(name, image, ContainerState.STOPPED, "Gestoppt per SIGTERM (Exit 143)");
+            // 137 = SIGKILL: out of memory or a stop that ran into its timeout.
+            case 137 -> ContainerView.of(name, image, ContainerState.DEGRADED, "Hart beendet per SIGKILL (Exit 137): OOM oder Stop-Timeout");
+            default -> ContainerView.of(name, image, ContainerState.DEGRADED, "Abgestürzt (Exit " + code + ")");
+        };
     }
 
     static String displayName(List<String> names, String id) {

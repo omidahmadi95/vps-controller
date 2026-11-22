@@ -20,6 +20,8 @@ class ContainerStatusMapperTest {
             restarting | Restarting (1) 3 seconds ago   | DEGRADED
             exited     | Exited (0) 2 hours ago         | STOPPED
             exited     | Exited (137) 5 minutes ago     | DEGRADED
+            exited     | Exited (143) 1 hour ago        | STOPPED
+            exited     | Exited (1) 1 hour ago          | DEGRADED
             exited     | Exited (-1) 1 minute ago       | DEGRADED
             exited     | Exited                         | UNKNOWN
             dead       | Dead                           | DEGRADED
