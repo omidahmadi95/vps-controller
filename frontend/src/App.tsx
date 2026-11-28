@@ -1,19 +1,29 @@
 import { useCallback, useEffect, useState } from 'react'
 import { ChecksView } from './ChecksView'
 import { ContainersView } from './ContainersView'
-import { clock, countBy, loadChecks, loadContainers, loadHistory, CHECK_ORDER, CONTAINER_ORDER } from './load'
+import { OverviewView } from './OverviewView'
+import { clock, countBy, loadChecks, loadContainers, loadHistory, loadOverview, overviewCounts, CHECK_ORDER, CONTAINER_ORDER } from './load'
 import { Readout } from './state'
-import type { ChecksReport, ContainerReport, HistoryBucket, Load } from './types'
+import type { ChecksReport, ContainerReport, HistoryBucket, Load, OverviewReport } from './types'
 
-type Tab = 'dienste' | 'container'
+type Tab = 'uebersicht' | 'dienste' | 'container'
 
 export default function App() {
-  const [tab, setTab] = useState<Tab>('dienste')
+  const [tab, setTab] = useState<Tab>('uebersicht')
+  const [overview, setOverview] = useState<Load<OverviewReport>>({ kind: 'loading' })
   const [checks, setChecks] = useState<Load<ChecksReport>>({ kind: 'loading' })
   const [containers, setContainers] = useState<Load<ContainerReport>>({ kind: 'loading' })
   const [history, setHistory] = useState<Record<number, HistoryBucket[]>>({})
   const [busy, setBusy] = useState(true)
   const [live, setLive] = useState('')
+
+  const refreshOverview = useCallback(async () => {
+    setBusy(true)
+    const next = await loadOverview()
+    setOverview(next)
+    if (next.kind === 'ok') setLive(`Aktualisiert ${clock(next.report.checkedAt)}`)
+    setBusy(false)
+  }, [])
 
   const refreshChecks = useCallback(async () => {
     setBusy(true)
@@ -35,23 +45,28 @@ export default function App() {
     setBusy(false)
   }, [])
 
-  const refresh = tab === 'dienste' ? refreshChecks : refreshContainers
+  const refresh = tab === 'uebersicht' ? refreshOverview : tab === 'dienste' ? refreshChecks : refreshContainers
   useEffect(() => {
     void refresh()
   }, [refresh])
   useEffect(() => {
     const id = setInterval(() => {
+      if (tab === 'uebersicht') void refreshOverview()
       if (tab === 'dienste') void refreshChecks()
     }, 30_000)
     return () => clearInterval(id)
-  }, [tab, refreshChecks])
+  }, [tab, refreshOverview, refreshChecks])
 
-  const counts = tab === 'dienste'
-    ? (checks.kind === 'ok' ? countBy(checks.report.checks, CHECK_ORDER) : null)
-    : (containers.kind === 'ok' ? countBy(containers.report.containers, CONTAINER_ORDER) : null)
-  const checkedAt = tab === 'dienste'
-    ? (checks.kind === 'ok' ? checks.report.checkedAt : null)
-    : (containers.kind === 'ok' ? containers.report.checkedAt : null)
+  const counts = tab === 'uebersicht'
+    ? (overview.kind === 'ok' ? overviewCounts(overview.report.counts) : null)
+    : tab === 'dienste'
+      ? (checks.kind === 'ok' ? countBy(checks.report.checks, CHECK_ORDER) : null)
+      : (containers.kind === 'ok' ? countBy(containers.report.containers, CONTAINER_ORDER) : null)
+  const checkedAt = tab === 'uebersicht'
+    ? (overview.kind === 'ok' ? overview.report.checkedAt : null)
+    : tab === 'dienste'
+      ? (checks.kind === 'ok' ? checks.report.checkedAt : null)
+      : (containers.kind === 'ok' ? containers.report.checkedAt : null)
 
   return (
     <>
@@ -60,6 +75,7 @@ export default function App() {
           <div className="bar">
             <h1 className="brand">VPS Controller</h1>
             <nav className="tabs" aria-label="Ansicht">
+              <button type="button" aria-pressed={tab === 'uebersicht'} onClick={() => setTab('uebersicht')}>Übersicht</button>
               <button type="button" aria-pressed={tab === 'dienste'} onClick={() => setTab('dienste')}>Dienste</button>
               <button type="button" aria-pressed={tab === 'container'} onClick={() => setTab('container')}>Container</button>
             </nav>
@@ -71,7 +87,9 @@ export default function App() {
         </div>
       </header>
       <main className="wrap" aria-busy={busy}>
-        {tab === 'dienste' ? <ChecksView load={checks} history={history} /> : <ContainersView load={containers} />}
+        {tab === 'uebersicht' ? <OverviewView load={overview} onShowDienste={() => setTab('dienste')} />
+          : tab === 'dienste' ? <ChecksView load={checks} history={history} />
+          : <ContainersView load={containers} />}
       </main>
       <p className="sr-only" role="status" aria-live="polite">{live}</p>
     </>

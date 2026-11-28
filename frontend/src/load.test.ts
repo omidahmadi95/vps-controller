@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createElement } from 'react'
-import { bucketClass, countBy, hostOf, loadChecks, loadContainers, loadHistory, pct, sinceText } from './load'
+import { bucketClass, countBy, duration, hostOf, loadChecks, loadContainers, loadHistory, loadOverview, overviewCounts, pct, sinceText, verdictText } from './load'
 import { Readout } from './state'
 import { ChecksView } from './ChecksView'
 import { ContainersView } from './ContainersView'
-import type { ChecksReport, ContainerReport, HistoryBucket, Load } from './types'
+import { OverviewView } from './OverviewView'
+import type { ChecksReport, ContainerReport, HistoryBucket, Load, OverviewReport, OverviewSource } from './types'
 
 const respond = (status: number, body: unknown) =>
   (async () => new Response(typeof body === 'string' ? body : JSON.stringify(body), { status })) as typeof fetch
@@ -159,5 +160,112 @@ describe('ContainersView', () => {
   it('empty is explicit', () => {
     const html = renderToStaticMarkup(createElement(ContainersView, { load: { kind: 'ok', report: { checkedAt: 'x', containers: [] } } }))
     expect(html).toContain('Keine Container')
+  })
+})
+
+const overviewReport: OverviewReport = {
+  checkedAt: '2026-11-28T07:12:04Z',
+  status: 'PROBLEM',
+  counts: { problem: 1, uncertain: 0, ok: 11, stopped: 2, paused: 1 },
+  incidents: [
+    { kind: 'CHECK', severity: 'PROBLEM', name: 'api.example.org', state: 'DOWN', label: 'Ausgefallen', since: '2026-11-28T07:08:31Z', detail: 'HTTP 503 (erwartet 200-399)', checkId: 7 },
+  ],
+  sources: [
+    { name: 'checks', state: 'OK', label: 'Aktuell', lastSeenAt: '2026-11-28T07:11:58Z' },
+    { name: 'containers', state: 'OK', label: 'Aktuell', lastSeenAt: '2026-11-28T07:12:04Z' },
+    { name: 'heartbeat', state: 'NOT_CONFIGURED', label: 'Nicht eingerichtet', lastSeenAt: null },
+  ],
+  recentOutages: [
+    { checkId: 3, name: 'shop.example.org', start: '2026-11-27T04:33:54Z', end: '2026-11-27T04:35:55Z', durationSeconds: 121, failures: 2 },
+  ],
+}
+const calmReport: OverviewReport = {
+  ...overviewReport,
+  status: 'CALM',
+  counts: { problem: 0, uncertain: 0, ok: 12, stopped: 2, paused: 1 },
+  incidents: [],
+  recentOutages: [],
+}
+
+describe('loadOverview', () => {
+  it('returns the report on 200', async () => {
+    expect(await loadOverview(respond(200, overviewReport))).toMatchObject({ kind: 'ok' })
+  })
+  it('500 is unreachable with the status text', async () => {
+    expect(await loadOverview(respond(500, 'boom'))).toMatchObject({ kind: 'unreachable', detail: 'API antwortet mit 500' })
+  })
+  it('a 200 without status or incidents is unreachable', async () => {
+    expect((await loadOverview(respond(200, { foo: 1 }))).kind).toBe('unreachable')
+  })
+  it('non-JSON is unreachable', async () => {
+    expect((await loadOverview(respond(200, '<html>'))).kind).toBe('unreachable')
+  })
+  it('network error is unreachable', async () => {
+    expect(await loadOverview(fail)).toMatchObject({ kind: 'unreachable', detail: 'Backend nicht erreichbar' })
+  })
+})
+
+describe('duration', () => {
+  it('reads seconds, minutes, hours and days', () => {
+    expect(duration(45)).toBe('45 s')
+    expect(duration(121)).toBe('2 min')
+    expect(duration(3600)).toBe('1 h 0 min')
+    expect(duration(90_000)).toBe('1 T 1 h')
+  })
+})
+
+describe('verdictText', () => {
+  it('names the problem count, the uncertain count, or the calm state', () => {
+    expect(verdictText('PROBLEM', overviewReport.counts)).toBe('Braucht dich: 1')
+    expect(verdictText('UNCERTAIN', { problem: 0, uncertain: 2, ok: 8, stopped: 0, paused: 0 })).toBe('Unklar: 2')
+    expect(verdictText('CALM', calmReport.counts)).toBe('Nichts gestört')
+  })
+})
+
+describe('overviewCounts', () => {
+  it('maps the report counts and never claims a problem in a calm state', () => {
+    expect(overviewCounts(overviewReport.counts)).toEqual([['Gestört', 1], ['Nicht erreichbar', 0], ['Läuft', 11]])
+    expect(overviewCounts(calmReport.counts)).toEqual([['Gestört', 0], ['Nicht erreichbar', 0], ['Läuft', 12]])
+  })
+  it('feeds a calm readout that shows no problem', () => {
+    const html = renderToStaticMarkup(createElement(Readout, { counts: overviewCounts(calmReport.counts), checkedAt: calmReport.checkedAt }))
+    expect(html).toContain('Gestört')
+    expect(html).toContain('12')
+  })
+})
+
+describe('OverviewView', () => {
+  it('raises a problem incident with its label, detail, duration and link to Dienste', () => {
+    const html = renderToStaticMarkup(createElement(OverviewView, { load: { kind: 'ok', report: overviewReport }, onShowDienste: () => {} }))
+    expect(html).toContain('Braucht dich: 1')
+    expect(html).toContain('api.example.org')
+    expect(html).toContain('Ausgefallen')
+    expect(html).toContain('seit 3 min')
+    expect(html).toContain('HTTP 503')
+    expect(html).toContain('Zum Dienst')
+  })
+  it('stays quiet but still names the seven quiet days', () => {
+    const html = renderToStaticMarkup(createElement(OverviewView, { load: { kind: 'ok', report: calmReport }, onShowDienste: () => {} }))
+    expect(html).toContain('Nichts gestört')
+    expect(html).toContain('Keine Unterbrechungen in den letzten sieben Tagen')
+    expect(html).not.toContain('Braucht dich')
+  })
+  it('shows the recent outages of the last seven days', () => {
+    const html = renderToStaticMarkup(createElement(OverviewView, { load: { kind: 'ok', report: overviewReport }, onShowDienste: () => {} }))
+    expect(html).toContain('Letzte sieben Tage')
+    expect(html).toContain('shop.example.org')
+    expect(html).toContain('2 min')
+  })
+  it('shows an unreachable source without relying on colour', () => {
+    const source: OverviewSource = { name: 'containers', state: 'UNREACHABLE', label: 'Nicht erreichbar', lastSeenAt: null }
+    const report: OverviewReport = { ...overviewReport, sources: [source] }
+    const html = renderToStaticMarkup(createElement(OverviewView, { load: { kind: 'ok', report }, onShowDienste: () => {} }))
+    expect(html).toContain('Container')
+    expect(html).toContain('Nicht erreichbar')
+  })
+  it('a failed API is an alert, not an all-fine state', () => {
+    const html = renderToStaticMarkup(createElement(OverviewView, { load: { kind: 'unreachable', detail: 'refused', checkedAt: '2026-11-28T07:12:04Z' }, onShowDienste: () => {} }))
+    expect(html).toContain('role="alert"')
+    expect(html).not.toContain('Nichts gestört')
   })
 })

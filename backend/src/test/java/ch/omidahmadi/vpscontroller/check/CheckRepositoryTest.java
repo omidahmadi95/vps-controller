@@ -136,6 +136,87 @@ class CheckRepositoryTest {
         assertThat(repository.exists(id + 999)).isFalse();
     }
 
+    @Test
+    void checksForOverviewCarriesStateFreshnessAndLastError() {
+        repository.sync(List.of(spec("Shop", "https://shop.example.org/health")), NOW);
+        long id = idOf("Shop");
+        repository.insertResult(id, NOW.minusSeconds(60), new ProbeResult(false, 525, null,
+                "HTTP 525 (erwartet 200-399)"));
+
+        CheckRepository.OverviewCheck c = repository.checksForOverview().getFirst();
+
+        assertThat(c.id()).isEqualTo(id);
+        assertThat(c.name()).isEqualTo("Shop");
+        assertThat(c.state()).isEqualTo(CheckState.PENDING);
+        assertThat(c.enabled()).isTrue();
+        assertThat(c.intervalSeconds()).isEqualTo(60);
+        assertThat(c.failureThreshold()).isEqualTo(2);
+        assertThat(c.lastCheckedAt()).isEqualTo(NOW.minusSeconds(60));
+        assertThat(c.lastError()).isEqualTo("HTTP 525 (erwartet 200-399)");
+    }
+
+    @Test
+    void checksForOverviewMarksDisabledChecksPaused() {
+        repository.sync(List.of(spec("Shop", "https://shop.example.org/health"),
+                spec("Api", "https://api.example.org/ping")), NOW);
+
+        repository.sync(List.of(spec("Api", "https://api.example.org/ping")), NOW);
+
+        CheckRepository.OverviewCheck shop = repository.checksForOverview().stream()
+                .filter(c -> c.name().equals("Shop")).findFirst().orElseThrow();
+        assertThat(shop.enabled()).isFalse();
+        assertThat(shop.state()).isEqualTo(CheckState.PAUSED);
+    }
+
+    @Test
+    void resultsForOverviewReturnsOnlyEnabledChecksFromTheWindowInTimeOrder() {
+        repository.sync(List.of(spec("Shop", "https://shop.example.org/health"),
+                spec("Api", "https://api.example.org/ping")), NOW);
+        long shop = idOf("Shop");
+        long api = idOf("Api");
+        repository.insertResult(api, NOW.minusSeconds(7200), new ProbeResult(true, 200, 50L, null));
+        repository.insertResult(shop, NOW.minusSeconds(120), new ProbeResult(true, 200, 50L, null));
+        repository.insertResult(api, NOW.minusSeconds(150), new ProbeResult(true, 200, 50L, null));
+        repository.insertResult(api, NOW.minusSeconds(90), new ProbeResult(false, 500, null, "HTTP 500"));
+
+        repository.sync(List.of(spec("Api", "https://api.example.org/ping")), NOW);
+
+        List<CheckRepository.OverviewResult> rows = repository.resultsForOverview(NOW.minusSeconds(3600));
+
+        assertThat(rows).extracting(CheckRepository.OverviewResult::checkId).containsOnly(api);
+        // the leading success carries no run boundary and stays in the database
+        assertThat(rows).extracting(CheckRepository.OverviewResult::checkedAt)
+                .containsExactly(NOW.minusSeconds(90));
+        assertThat(rows.getFirst().name()).isEqualTo("Api");
+        assertThat(rows.getFirst().ok()).isFalse();
+    }
+
+    @Test
+    void resultsForOverviewKeepsFailuresAndOnlyTheFirstSuccessAfterEach() {
+        repository.sync(List.of(spec("Shop", "https://shop.example.org/health")), NOW);
+        long id = idOf("Shop");
+        boolean[] series = {true, true, false, false, true, true, false, true, true};
+        for (int i = 0; i < series.length; i++) {
+            ProbeResult r = series[i] ? new ProbeResult(true, 200, 50L, null) : new ProbeResult(false, 503, null, "HTTP 503");
+            repository.insertResult(id, NOW.minusSeconds(600 - 60L * i), r);
+        }
+
+        List<CheckRepository.OverviewResult> rows = repository.resultsForOverview(NOW.minusSeconds(3600));
+
+        assertThat(rows).extracting(CheckRepository.OverviewResult::ok)
+                .containsExactly(false, false, true, false, true);
+        assertThat(rows).extracting(CheckRepository.OverviewResult::checkedAt).containsExactly(
+                NOW.minusSeconds(480), NOW.minusSeconds(420), NOW.minusSeconds(360),
+                NOW.minusSeconds(240), NOW.minusSeconds(180));
+    }
+
+    @Test
+    void enabledCheckWithoutStateRowIsPendingNotAnError() {
+        assertThat(CheckRepository.stateOf(true, null)).isEqualTo(CheckState.PENDING);
+        assertThat(CheckRepository.stateOf(true, "DOWN")).isEqualTo(CheckState.DOWN);
+        assertThat(CheckRepository.stateOf(false, null)).isEqualTo(CheckState.PAUSED);
+    }
+
     private CheckView byName(String name) {
         return repository.overview(NOW).stream().filter(v -> v.name().equals(name)).findFirst().orElseThrow();
     }

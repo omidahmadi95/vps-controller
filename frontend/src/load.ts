@@ -1,4 +1,4 @@
-import type { CheckHistory, ChecksReport, ContainerReport, HistoryBucket, Load } from './types'
+import type { CheckHistory, ChecksReport, ContainerReport, HistoryBucket, Load, OverviewCounts, OverviewReport, OverviewStatus } from './types'
 
 /** Any answer that is not the expected report counts as unreachable — never a silent empty list. */
 async function loadReport<T>(
@@ -27,6 +27,9 @@ export const loadContainers = (fetchFn: typeof fetch = fetch): Promise<Load<Cont
 export const loadChecks = (fetchFn: typeof fetch = fetch): Promise<Load<ChecksReport>> =>
   loadReport('/api/checks', (b) => Array.isArray(b.checks), fetchFn)
 
+export const loadOverview = (fetchFn: typeof fetch = fetch): Promise<Load<OverviewReport>> =>
+  loadReport('/api/overview', (b) => typeof b.status === 'string' && Array.isArray(b.incidents), fetchFn)
+
 /** 24 h history buckets for one check; null when the strip cannot be shown (kept out of the page state). */
 export async function loadHistory(id: number, fetchFn: typeof fetch = fetch): Promise<HistoryBucket[] | null> {
   try {
@@ -54,6 +57,33 @@ export function countBy(items: { label: string }[], order: string[]): [string, n
     return i < 0 ? order.length : i
   }
   return [...counts].sort((a, b) => rank(a[0]) - rank(b[0]))
+}
+
+/** Counts in the header for the Übersicht tab; a calm report simply has no problem count to claim. */
+export function overviewCounts(counts: OverviewCounts): [string, number][] {
+  return [['Gestört', counts.problem], ['Nicht erreichbar', counts.uncertain], ['Läuft', counts.ok]]
+}
+
+/** Verdict line: what needs you, what is unclear, or the quiet all-clear. */
+export function verdictText(status: OverviewStatus, counts: OverviewCounts): string {
+  if (status === 'PROBLEM') return `Braucht dich: ${counts.problem}`
+  if (status === 'UNCERTAIN') return `Unklar: ${counts.uncertain}`
+  return 'Nichts gestört'
+}
+
+/** A duration in seconds, read as the shortest clear unit. */
+export function duration(seconds: number): string {
+  if (seconds < 60) return `${Math.floor(seconds)} s`
+  const min = Math.floor(seconds / 60)
+  if (min < 60) return `${min} min`
+  const h = Math.floor(min / 60)
+  if (h < 24) return `${h} h ${min % 60} min`
+  return `${Math.floor(h / 24)} T ${h % 24} h`
+}
+
+/** Incident age as text for "seit …": against the report time, so a skewed client clock does not matter. */
+export function sinceDuration(iso: string, from: string): string {
+  return duration((new Date(from).getTime() - new Date(iso).getTime()) / 1000)
 }
 
 export const clock = (iso: string) => new Date(iso).toLocaleTimeString('de-CH')

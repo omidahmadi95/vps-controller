@@ -184,6 +184,65 @@ public class CheckRepository {
                 .list();
     }
 
+    /** One enabled-or-not check row with everything the overview needs (state, freshness, last error, thresholds). */
+    public record OverviewCheck(long id, String name, CheckState state, Instant since, Instant lastCheckedAt,
+                                String lastError, int intervalSeconds, int failureThreshold, boolean enabled) {
+    }
+
+    public List<OverviewCheck> checksForOverview() {
+        return jdbc.sql("""
+                        select c.id, c.name, c.interval_seconds, c.failure_threshold, c.enabled, s.state, s.since,
+                               r.checked_at as last_checked_at, r.error as last_error
+                        from http_check c
+                        left join check_state s on s.check_id = c.id
+                        left join lateral (
+                            select checked_at, error from check_result
+                            where check_id = c.id order by checked_at desc, id desc limit 1
+                        ) r on true
+                        """)
+                .query((rs, n) -> new OverviewCheck(
+                        rs.getLong("id"), rs.getString("name"),
+                        stateOf(rs.getBoolean("enabled"), rs.getString("state")),
+                        nullableInstant(rs, "since"), nullableInstant(rs, "last_checked_at"),
+                        rs.getString("last_error"), rs.getInt("interval_seconds"), rs.getInt("failure_threshold"),
+                        rs.getBoolean("enabled")))
+                .list();
+    }
+
+    /** A check without a state row yet (just synced, never probed) is PENDING, never an error. */
+    static CheckState stateOf(boolean enabled, String state) {
+        if (!enabled) {
+            return CheckState.PAUSED;
+        }
+        return state == null ? CheckState.PENDING : CheckState.valueOf(state);
+    }
+
+    /** Results of enabled checks since {@code from}, in insertion order per check — the series the outage runs need. */
+    public record OverviewResult(long checkId, String name, int failureThreshold, Instant checkedAt, boolean ok) {
+    }
+
+    public List<OverviewResult> resultsForOverview(Instant from) {
+        return jdbc.sql("""
+                        with s as (
+                            select r.id, r.check_id, r.checked_at, r.ok,
+                                   lag(r.ok) over (partition by r.check_id order by r.checked_at, r.id) as prev_ok
+                            from check_result r
+                            where r.checked_at >= :from
+                        )
+                        select s.check_id, c.name, c.failure_threshold, s.checked_at, s.ok
+                        from s
+                        join http_check c on c.id = s.check_id
+                        -- only failures and the first success after one: run boundaries stay exact, the
+                        -- thousands of ordinary successes never leave the database
+                        where c.enabled and (not s.ok or s.prev_ok = false)
+                        order by s.check_id, s.checked_at, s.id
+                        """)
+                .param("from", timestamp(from))
+                .query((rs, n) -> new OverviewResult(rs.getLong("check_id"), rs.getString("name"),
+                        rs.getInt("failure_threshold"), nullableInstant(rs, "checked_at"), rs.getBoolean("ok")))
+                .list();
+    }
+
     public List<Bucket> buckets(long checkId, Instant from) {
         return jdbc.sql("""
                         select (extract(epoch from checked_at)::bigint / 1800) * 1800 as bucket,

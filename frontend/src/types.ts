@@ -54,3 +54,54 @@ export type Load<T> =
   | { kind: 'loading' }
   | { kind: 'ok'; report: T }
   | { kind: 'unreachable'; detail: string; checkedAt: string }
+
+export type OverviewStatus = 'PROBLEM' | 'UNCERTAIN' | 'CALM'
+export type IncidentKind = 'CHECK' | 'CONTAINER' | 'SOURCE'
+export type IncidentSeverity = 'PROBLEM' | 'UNCERTAIN'
+export type SourceName = 'checks' | 'containers' | 'heartbeat'
+export type SourceState = 'OK' | 'STALE' | 'UNREACHABLE' | 'NOT_CONFIGURED'
+
+export interface OverviewCounts {
+  problem: number
+  uncertain: number
+  ok: number
+  stopped: number
+  paused: number
+}
+
+export interface OverviewIncident {
+  kind: IncidentKind
+  severity: IncidentSeverity
+  name: string
+  /** CheckState or ContainerState for CHECK/CONTAINER, the source state for SOURCE. */
+  state: CheckState | ContainerState | SourceState
+  label: string
+  since: string | null
+  detail: string | null
+  checkId: number | null
+}
+
+export interface OverviewSource {
+  name: SourceName
+  state: SourceState
+  label: string
+  lastSeenAt: string | null
+}
+
+export interface RecentOutage {
+  checkId: number
+  name: string
+  start: string
+  end: string | null
+  durationSeconds: number
+  failures: number
+}
+
+export interface OverviewReport {
+  checkedAt: string
+  status: OverviewStatus
+  counts: OverviewCounts
+  incidents: OverviewIncident[]
+  sources: OverviewSource[]
+  recentOutages: RecentOutage[]
+}

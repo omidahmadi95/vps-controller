@@ -23,11 +23,21 @@ public class Heartbeat {
     private final Clock clock;
 
     private volatile Instant lastPing;
+    private volatile Instant lastOk;
 
     public Heartbeat(RestClient rest, URI url, Clock clock) {
         this.rest = rest;
         this.url = url;
         this.clock = clock;
+    }
+
+    /** The instant of the last successful ping, or null if none succeeded yet or no URL is set. */
+    public Instant lastOk() {
+        return lastOk;
+    }
+
+    public boolean configured() {
+        return url != null;
     }
 
     public void pulse() {
@@ -41,6 +51,7 @@ public class Heartbeat {
         lastPing = now;
         try {
             rest.get().uri(url).retrieve().toBodilessEntity();
+            lastOk = now;
         } catch (RestClientException e) {
             log.warn("Heartbeat fehlgeschlagen: {}", e.getClass().getSimpleName());
         }
